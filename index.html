@@ -25,6 +25,7 @@
   button,.btn{border:0; border-radius:12px; padding:10px 12px; cursor:pointer; font-weight:600; background:var(--brand); color:#fff; box-shadow:0 5px 14px rgba(90,124,247,.25)}
   .btn-ghost{background:#eef2ff; color:#3b4dff; box-shadow:none}
   .btn-accent{background:var(--accent)} .btn-warn{background:var(--warn)}
+  button[disabled]{opacity:.5; pointer-events:none; filter:grayscale(.2)}
   input,textarea,select{width:100%; padding:10px 12px; border-radius:12px; border:1px solid #e6ebf5; background:#fbfcff; outline:none; font-size:14px}
   .grid-2{display:grid; grid-template-columns:1fr 1fr; gap:10px}
   .grid-3{display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px}
@@ -45,6 +46,9 @@
   .modal-actions{display:flex; gap:8px; padding:0 16px 16px}
   .auth{margin-top:8px; display:flex; gap:8px; align-items:center; flex-wrap:wrap}
   .auth small{opacity:.95}
+  .auth input{width:auto}
+  .err{background:#ffe8e5; color:#7a1f14; border:1px solid #ffd0c8; padding:6px 8px; border-radius:10px; font-size:12px; display:none}
+  .ok{background:#e8fff4; color:#11553b; border:1px solid #c6f7df; padding:6px 8px; border-radius:10px; font-size:12px; display:none}
 </style>
 </head>
 <body>
@@ -55,19 +59,24 @@
         <h1>Pri’s Planner</h1>
         <span class="pill">Monthly projects → Weekly priorities → Calendar</span>
       </div>
-      <p class="muted" style="margin:6px 0 0">Local-first planner with optional Google sign-in sync. Create Calendar events and keep links attached to tasks.</p>
+      <p class="muted" style="margin:6px 0 0">Sign in with email to sync your planner securely. Create Calendar events and keep links attached to tasks.</p>
 
       <div class="toolbar" style="margin-top:10px">
-        <button class="btn-accent" onclick="document.getElementById('p-name').focus()">Add Project</button>
+        <button class="btn-accent" id="btn-focus">Add Project</button>
         <button class="btn-ghost" onclick="document.getElementById('settingsDialog').showModal()">⚙️ Settings</button>
       </div>
 
-      <!-- INLINE onclick so it always works -->
+      <!-- Email/Password auth -->
       <div class="auth">
-        <button class="btn-ghost" id="btn-signin"  onclick="trySignIn()">Sign in with Google</button>
-        <button class="btn-ghost" id="btn-signout" style="display:none" onclick="trySignOut()">Sign out</button>
+        <input id="auth-email" placeholder="email@example.com" autocomplete="username" />
+        <input id="auth-pass" type="password" placeholder="password" autocomplete="current-password" />
+        <button class="btn-ghost" id="btn-signup">Sign up</button>
+        <button class="btn-ghost" id="btn-signin">Sign in</button>
+        <button class="btn-ghost" id="btn-signout" style="display:none">Sign out</button>
         <small id="auth-status">Not signed in</small>
       </div>
+      <div id="auth-error" class="err"></div>
+      <div id="auth-ok" class="ok"></div>
     </div>
   </header>
 
@@ -77,17 +86,17 @@
       <section class="card">
         <h2>➕ Add Project</h2>
         <div class="grid-2">
-          <input id="p-name" placeholder="Project name"/>
-          <input id="p-deadline" type="date" />
+          <input id="p-name" placeholder="Project name" disabled />
+          <input id="p-deadline" type="date" disabled />
         </div>
         <div class="grid-3" style="margin-top:10px">
-          <select id="p-stage"><option>Ideation</option><option selected>In Progress</option><option>Review</option><option>Final</option></select>
-          <select id="p-priority"><option>P0</option><option selected>P1</option><option>P2</option></select>
-          <input id="p-link" placeholder="Link (Drive/Figma/Doc)" />
+          <select id="p-stage" disabled><option>Ideation</option><option selected>In Progress</option><option>Review</option><option>Final</option></select>
+          <select id="p-priority" disabled><option>P0</option><option selected>P1</option><option>P2</option></select>
+          <input id="p-link" placeholder="Link (Drive/Figma/Doc)" disabled />
         </div>
-        <textarea id="p-notes" rows="3" style="margin-top:10px" placeholder="Notes (short)"></textarea>
+        <textarea id="p-notes" rows="3" style="margin-top:10px" placeholder="Notes (short)" disabled></textarea>
         <div class="toolbar" style="margin-top:10px">
-          <button onclick="addProject()">Add</button>
+          <button id="btn-add" disabled>Add</button>
         </div>
 
         <div style="margin-top:16px">
@@ -107,8 +116,8 @@
       <section class="card">
         <h2>📌 This Week’s Priorities</h2>
         <div class="toolbar" style="margin-bottom:10px">
-          <button class="btn-accent" onclick="quickAddWeekly()">Quick Add</button>
-          <button class="btn-ghost" onclick="clearDone()">Clear Done</button>
+          <button class="btn-accent" id="btn-quick" disabled>Quick Add</button>
+          <button class="btn-ghost" id="btn-clear" disabled>Clear Done</button>
         </div>
         <div id="weekly" class="list"></div>
         <p class="footer-note">Use **Google Calendar** to open a pre-filled event, or **.ics** for a downloadable file.</p>
@@ -123,7 +132,7 @@
       <textarea id="importText" rows="12" style="width:100%; font-family: ui-monospace, Menlo, monospace" placeholder='Paste backup text here'></textarea>
     </div>
     <div class="modal-actions">
-      <button class="btn-accent" onclick="confirmImport()">Restore</button>
+      <button class="btn-accent" id="btn-restore">Restore</button>
       <button class="btn-ghost" onclick="document.getElementById('importDialog').close()">Cancel</button>
     </div>
   </dialog>
@@ -132,9 +141,9 @@
   <dialog id="settingsDialog">
     <div class="modal-head"><strong>Settings</strong></div>
     <div class="modal-body" style="display:grid; gap:10px">
-      <button class="btn-ghost" onclick="backupData()">Backup data</button>
+      <button class="btn-ghost" id="btn-backup">Backup data</button>
       <button class="btn-ghost" onclick="document.getElementById('importDialog').showModal()">Restore from backup</button>
-      <button class="btn-ghost" onclick="resetAll()">Reset everything</button>
+      <button class="btn-ghost" id="btn-reset">Reset everything</button>
       <small class="muted">Backups are simple text you can save anywhere.</small>
     </div>
     <div class="modal-actions">
@@ -145,19 +154,31 @@
 <script>
 /* ===== Core Planner (local + UI) ===== */
 const storeKey = "pri_planner_v3";
-let db = load() || { projects: [], weekly: [] };
-let currentUser = null;      // set after Firebase auth
+let db = load() || { projects: [], weekly: [], _lastUpdated: null };
+let currentUser = null;              // after Firebase auth
+let unsubscribe = null;              // Firestore onSnapshot cleanup
+let cloudWriteTimer = null;          // debounce
+let suppressCloudWrite = false;      // avoid loops when pulling from cloud
 
 function uid(){ return Math.random().toString(36).slice(2, 9); }
+function nowISO(){ return new Date().toISOString(); }
 function save(localOnly=false){
+  db._lastUpdated = nowISO();
   localStorage.setItem(storeKey, JSON.stringify(db));
   render();
-  if(currentUser && !localOnly && window.scheduleCloudSave){ scheduleCloudSave(); }
+  if(currentUser && !localOnly && window.cloudSave){ cloudSave(); }
 }
 function load(){ try{ return JSON.parse(localStorage.getItem(storeKey)); }catch(e){ return null; } }
 function fmtDate(d){ if(!d) return "No date"; try{ const dt=new Date(d); return dt.toLocaleDateString(undefined,{day:"2-digit",month:"short",year:"numeric"});}catch(e){return d;} }
 function within7Days(dateStr){ if(!dateStr) return false; const now=new Date(); const d=new Date(dateStr); const diff=(d-now)/(1000*60*60*24); return diff<=7 && diff>=-1; }
 function isoInDays(n){ const dt=new Date(); dt.setDate(dt.getDate()+n); return dt.toISOString().slice(0,10); }
+
+function setInputsEnabled(enabled){
+  ["p-name","p-deadline","p-stage","p-priority","p-link","p-notes","btn-add","btn-quick","btn-clear"].forEach(id=>{
+    const el = document.getElementById(id); if(!el) return;
+    if(enabled){ el.removeAttribute("disabled"); } else { el.setAttribute("disabled",""); }
+  });
+}
 
 function render(){
   document.getElementById("kpi-total").textContent = db.projects.length;
@@ -228,13 +249,14 @@ function render(){
 
   // Auth header state
   document.getElementById("auth-status").textContent = currentUser ? `Synced as ${currentUser.email}` : "Not signed in";
-  document.getElementById("btn-signin").style.display  = currentUser ? "none" : "inline-block";
   document.getElementById("btn-signout").style.display = currentUser ? "inline-block" : "none";
+  setInputsEnabled(!!currentUser);
 }
 
 /* CRUD: Projects / Weekly */
 function addProject(){
   const name = val("p-name");
+  if(!currentUser){ return toastErr("Please sign in first to add & sync."); }
   if(!name) return alert("Project name is required");
   const project = {
     id: uid(),
@@ -250,12 +272,14 @@ function addProject(){
   save();
 }
 function addToWeekly(projectId){
+  if(!currentUser){ return toastErr("Please sign in first."); }
   const p = db.projects.find(x => x.id===projectId);
   if(!p) return;
   db.weekly.push({ id:uid(), title:p.name, due:p.deadline||isoInDays(7), projectId:p.id, notes:p.notes, link:p.link, done:false });
   save();
 }
 function editProject(id){
+  if(!currentUser){ return toastErr("Sign in to edit."); }
   const p = db.projects.find(x => x.id===id);
   if(!p) return;
   const name = prompt("Project name", p.name) ?? p.name;
@@ -268,19 +292,22 @@ function editProject(id){
   save();
 }
 function deleteProject(id){
+  if(!currentUser){ return toastErr("Sign in to delete."); }
   if(!confirm("Delete this project?")) return;
   db.projects = db.projects.filter(x => x.id!==id);
   db.weekly = db.weekly.map(w => w.projectId===id ? {...w, projectId:null} : w);
   save();
 }
 function quickAddWeekly(){
+  if(!currentUser){ return toastErr("Please sign in first."); }
   const title = prompt("Weekly task title");
   if(!title) return;
   db.weekly.push({ id:uid(), title, due: isoInDays(3), notes:"", link:"", done:false });
   save();
 }
-function clearDone(){ db.weekly = db.weekly.filter(w => !w.done); save(); }
+function clearDone(){ if(!currentUser){ return toastErr("Sign in first."); } db.weekly = db.weekly.filter(w => !w.done); save(); }
 function editWeekly(id){
+  if(!currentUser){ return toastErr("Sign in to edit."); }
   const w = db.weekly.find(x => x.id===id);
   if(!w) return;
   const title = prompt("Title", w.title) ?? w.title;
@@ -290,8 +317,8 @@ function editWeekly(id){
   Object.assign(w, {title, due, link, notes});
   save();
 }
-function deleteWeekly(id){ if(!confirm("Delete this weekly item?")) return; db.weekly = db.weekly.filter(x => x.id!==id); save(); }
-function toggleDone(id){ const w = db.weekly.find(x => x.id===id); if(!w) return; w.done = !w.done; save(); }
+function deleteWeekly(id){ if(!currentUser){ return toastErr("Sign in to delete."); } if(!confirm("Delete this weekly item?")) return; db.weekly = db.weekly.filter(x => x.id!==id); save(); }
+function toggleDone(id){ if(!currentUser){ return toastErr("Sign in first."); } const w = db.weekly.find(x => x.id===id); if(!w) return; w.done = !w.done; save(); }
 
 /* Settings helpers */
 function backupData(){
@@ -306,7 +333,7 @@ function confirmImport(){
   try{ const parsed = JSON.parse(txt); if(!parsed.projects || !parsed.weekly) throw new Error("Invalid format"); db = parsed; save(); document.getElementById("importDialog").close(); }
   catch(e){ alert("Could not restore. Check the backup text."); }
 }
-function resetAll(){ if(!confirm("This clears everything on this device.")) return; db = {projects:[], weekly:[]}; save(); }
+function resetAll(){ if(!confirm("This clears everything on this device.")) return; db = {projects:[], weekly:[], _lastUpdated:null}; save(); }
 
 /* Calendar helpers */
 function downloadICS(w){
@@ -339,141 +366,145 @@ function clearInputs(...ids){ ids.forEach(i => document.getElementById(i).value=
 function escapeHTML(s){ return String(s??"").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function escapeAttr(s){ return escapeHTML(s).replace(/"/g,'&quot;'); }
 function escapeICS(s){ return String(s||"").replace(/[\n\r]/g,"\\n").replace(/,/g,"\\,").replace(/;/g,"\\;"); }
+function toastErr(msg){ const el=document.getElementById("auth-error"); el.textContent=msg; el.style.display="inline-block"; setTimeout(()=>{el.style.display="none";}, 3500); }
+function toastOk(msg){ const el=document.getElementById("auth-ok"); el.textContent=msg; el.style.display="inline-block"; setTimeout(()=>{el.style.display="none";}, 2500); }
+
+/* Wire basic buttons */
+document.getElementById("btn-add").onclick = addProject;
+document.getElementById("btn-quick").onclick = quickAddWeekly;
+document.getElementById("btn-clear").onclick = clearDone;
+document.getElementById("btn-backup").onclick = backupData;
+document.getElementById("btn-restore").onclick = confirmImport;
+document.getElementById("btn-reset").onclick = resetAll;
+document.getElementById("btn-focus").onclick = ()=>document.getElementById('p-name').focus();
 
 render();
 </script>
 
-<!-- ===== Google Sign-in & Cloud Sync (Firebase) ===== -->
-<script>
-  // global flags/functions used by inline onclick
-  window.__useFirebase = false;
-  function trySignIn(){
-    if (!window.__useFirebase) { alert("Sign-in needs Firebase config.\nIf already added, hard refresh and try again."); return; }
-    if (typeof window.__signin === "function") window.__signin();
-  }
-  function trySignOut(){ if (typeof window.__signout === "function") window.__signout(); }
-</script>
+<!-- ===== Firebase (Email/Password auth + Firestore sync) ===== -->
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 <script>
-/* Init Firebase safely */
+/* Init Firebase */
+let fs, auth;
 try {
   const firebaseConfig = {
-  apiKey: "AIzaSyDap9Hp_6VZFvY-26mqjFc_utNH42h9a5k",
-  authDomain: "pri-planner.firebaseapp.com",
-  projectId: "pri-planner",
-  storageBucket: "pri-planner.appspot.com",
-  messagingSenderId: "658123436645",
-  appId: "1:658123436645:web:1e5ecf12b556c283140c8c"
-};
+    apiKey: "AIzaSyDap9Hp_6VZFvY-26mqjFc_utNH42h9a5k",
+    authDomain: "pri-planner.firebaseapp.com",
+    projectId: "pri-planner",
+    storageBucket: "pri-planner.appspot.com",
+    messagingSenderId: "658123436645",
+    appId: "1:658123436645:web:1e5ecf12b556c283140c8c"
+  };
   firebase.initializeApp(firebaseConfig);
-  window.__useFirebase = true;
-} catch(e) {
-  console.warn("Firebase not configured; staying local-only.", e);
+  auth = firebase.auth();
+  fs = firebase.firestore();
+
+  // Offline cache (best-effort)
+  fs.enablePersistence?.().catch(()=>{});
+} catch(e){
+  console.warn("Firebase init failed; staying local-only.", e);
 }
 
-if (window.__useFirebase) {
-  const auth = firebase.auth();
-  const fs   = firebase.firestore();
-  const docRefFor = (uid) => fs.collection("pri_planner").doc(uid);
+/* Auth helpers (Email/Password) */
+const emailEl = document.getElementById("auth-email");
+const passEl  = document.getElementById("auth-pass");
+const btnUp   = document.getElementById("btn-signup");
+const btnIn   = document.getElementById("btn-signin");
+const btnOut  = document.getElementById("btn-signout");
 
-  // Offline cache (ignore if not supported)
-  fs.enablePersistence?.().catch(() => {});
-  // Local session
-  auth.useDeviceLanguage();
-  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(console.warn);
+btnUp.onclick = async () => {
+  if(!auth) return toastErr("Firebase not available.");
+  const email = emailEl.value.trim(), pass = passEl.value;
+  if(!email || !pass) return toastErr("Enter email & password.");
+  try{
+    await auth.createUserWithEmailAndPassword(email, pass);
+    toastOk("Account created + signed in");
+  }catch(e){ toastErr(e?.message || "Sign up error"); }
+};
+btnIn.onclick = async () => {
+  if(!auth) return toastErr("Firebase not available.");
+  const email = emailEl.value.trim(), pass = passEl.value;
+  if(!email || !pass) return toastErr("Enter email & password.");
+  try{
+    await auth.signInWithEmailAndPassword(email, pass);
+    toastOk("Signed in");
+  }catch(e){ toastErr(e?.message || "Sign in error"); }
+};
+btnOut.onclick = async () => {
+  if(!auth) return;
+  try { await auth.signOut(); toastOk("Signed out"); }
+  catch(e){ toastErr(e?.message || "Sign out error"); }
+};
 
-  // Detect iframe/sandbox → prefer redirect
-  const inIframe = (() => { try { return window.self !== window.top; } catch { return true; } })();
+/* Firestore sync */
+function docRefFor(uid){ return fs.collection("pri_planner").doc(uid); }
 
-  // Define globals used by buttons
-  window.__signin = async () => {
-    const provider = new firebase.auth.GoogleAuthProvider();
+function cloudSave(){
+  clearTimeout(cloudWriteTimer);
+  cloudWriteTimer = setTimeout(async () => {
+    if(!auth?.currentUser) return;
     try {
-      if (inIframe) {
-        await auth.signInWithRedirect(provider);
-      } else {
-        await auth.signInWithPopup(provider);
-      }
-    } catch (err) {
-      console.error("Popup sign-in failed, falling back to redirect:", err?.code, err?.message);
-      try { await auth.signInWithRedirect(provider); }
-      catch (e2) {
-        console.error("Redirect sign-in failed:", e2?.code, e2?.message);
-        alert("Google sign-in couldn’t start.\n\n" +
-              "• Serve over http(s)\n" +
-              "• Add your domain in Firebase Auth → Authorized domains\n" +
-              "• Enable Google provider in Firebase Auth\n\n" +
-              `Error: ${e2?.code || "unknown"}`);
-      }
+      const payload = { ...db, _lastUpdated: new Date().toISOString() };
+      suppressCloudWrite = true;
+      await docRefFor(auth.currentUser.uid).set(payload, { merge: false });
+      suppressCloudWrite = false;
+    } catch(e) {
+      suppressCloudWrite = false;
+      toastErr("Cloud save error");
+      console.error("Cloud save error:", e);
     }
-  };
+  }, 500);
+}
 
-  window.__signout = async () => {
-    try { await auth.signOut(); }
-    catch (e) { console.error("Sign-out error:", e?.code, e?.message); }
-  };
+if (auth && fs) {
+  auth.useDeviceLanguage?.();
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
 
-  // Handle redirect results immediately (prevents flicker)
-  auth.getRedirectResult()
-    .then((result) => {
-      if (result && result.user) {
-        window.currentUser = result.user;
-        document.getElementById("auth-status").textContent = `Synced as ${result.user.email}`;
-        document.getElementById("btn-signin").style.display="none";
-        document.getElementById("btn-signout").style.display="inline-block";
-      }
-    })
-    .catch((e) => { console.error("getRedirectResult error:", e?.code, e?.message); });
-
-  // Live auth state → load/push Firestore right away + live listener
-  let unsubscribe = null;
   auth.onAuthStateChanged(async (user) => {
-    window.currentUser = user || null;
+    currentUser = user || null;
 
-    // Clean up previous listener if any
-    if (unsubscribe) { unsubscribe(); unsubscribe = null; }
+    // clean up previous listener
+    if (unsubscribe){ unsubscribe(); unsubscribe = null; }
 
     if (user) {
-      document.getElementById("btn-signin").style.display = "none";
-      document.getElementById("btn-signout").style.display = "inline-block";
       document.getElementById("auth-status").textContent = `Synced as ${user.email}`;
+      btnOut.style.display = "inline-block";
 
       const ref = docRefFor(user.uid);
 
-      // Listen for remote changes (multi-device live sync)
-      unsubscribe = ref.onSnapshot((snap) => {
-        if (!snap.exists) return;
-        db = snap.data();
-        render();                 // render without triggering cloud push
-        localStorage.setItem(storeKey, JSON.stringify(db));
-      });
-
-      // Ensure document exists on first sign-in
+      // Create document if first time
       const snap = await ref.get();
       if (!snap.exists) {
         await ref.set({ ...db, _lastUpdated: new Date().toISOString() });
       }
-    } else {
-      document.getElementById("btn-signin").style.display = "inline-block";
-      document.getElementById("btn-signout").style.display = "none";
-      document.getElementById("auth-status").textContent = "Not signed in";
-    }
-  });
 
-  // Debounced cloud save
-  window.scheduleCloudSave = function() {
-    clearTimeout(window.__cloudTimer);
-    window.__cloudTimer = setTimeout(async () => {
-      if (window.currentUser) {
-        try {
-          const payload = { ...db, _lastUpdated: new Date().toISOString() };
-          await docRefFor(window.currentUser.uid).set(payload, { merge: false });
-        } catch (e) { console.error("Cloud save error:", e?.code, e?.message); }
-      }
-    }, 500);
-  };
+      // Live listener for cross-device sync
+      unsubscribe = ref.onSnapshot((s) => {
+        if (!s.exists) return;
+        const remote = s.data();
+        // If remote is newer, pull it; else keep local
+        const localTs  = Date.parse(db._lastUpdated || 0);
+        const remoteTs = Date.parse(remote._lastUpdated || 0);
+        if (remoteTs >= localTs) {
+          db = remote;
+          localStorage.setItem(storeKey, JSON.stringify(db));
+          render();
+        } else {
+          // local newer → push up
+          if (!suppressCloudWrite) cloudSave();
+        }
+      });
+
+      setInputsEnabled(true);
+    } else {
+      document.getElementById("auth-status").textContent = "Not signed in";
+      btnOut.style.display = "none";
+      setInputsEnabled(false);
+    }
+    render();
+  });
 }
 </script>
 </body>
