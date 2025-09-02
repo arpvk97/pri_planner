@@ -360,13 +360,15 @@ render();
 /* Init Firebase safely */
 try {
   const firebaseConfig = {
-    apiKey: "AIzaSyDap9Hp_6VZfY-26mqjFc_utNH42h9a5k",
-    authDomain: "pri-planner.firebaseapp.com",
-    projectId: "pri-planner",
-    storageBucket: "pri-planner.appspot.com",
-    messagingSenderId: "658123436645",
-    appId: "1:658123436645:web:1e5ecf12b556c283140c8c"
-  };
+  apiKey: "AIzaSyDap9Hp_6VZFvY-26mqjFc_utNH42h9a5k",
+  authDomain: "pri-planner.firebaseapp.com",
+  projectId: "pri-planner",
+  storageBucket: "pri-planner.firebasestorage.app",
+  messagingSenderId: "658123436645",
+  appId: "1:658123436645:web:1e5ecf12b556c283140c8c"
+};
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
   firebase.initializeApp(firebaseConfig);
   window.__useFirebase = true;
 } catch(e) {
