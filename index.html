@@ -45,7 +45,7 @@
         <h1>Pri’s Planner</h1>
         <span class="pill">Monthly projects → Weekly priorities → Calendar</span>
       </div>
-      <p class="muted">Your planner synced with Airtable ☁️</p>
+      <p class="muted">Your planner, synced with Airtable ☁️</p>
       <div class="toolbar" style="margin-top:10px">
         <button class="btn-accent" onclick="document.getElementById('p-name').focus()">Add Project</button>
         <button class="btn-ghost" onclick="cloudLoad()">⟳ Sync Now</button>
@@ -55,6 +55,7 @@
 
   <main class="wrap">
     <div class="row">
+      <!-- LEFT: Add / Projects -->
       <section class="card">
         <h2>➕ Add Project</h2>
         <div class="grid-2">
@@ -81,8 +82,10 @@
 
         <h2 style="margin-top:16px">📁 Projects</h2>
         <div id="projects" class="list"></div>
+        <p class="footer-note">Use “Add to Weekly” to push a project into this week’s list.</p>
       </section>
 
+      <!-- RIGHT: Weekly -->
       <section class="card">
         <h2>📌 This Week’s Priorities</h2>
         <div class="toolbar" style="margin-bottom:10px">
@@ -90,27 +93,28 @@
           <button class="btn-ghost" onclick="clearDone()">Clear Done</button>
         </div>
         <div id="weekly" class="list"></div>
+        <p class="footer-note">Use **Google Calendar** to open a pre-filled event, or **.ics** for a downloadable file.</p>
       </section>
     </div>
   </main>
 
 <script>
-/* ===== Airtable Config ===== */
-const AIRTABLE_TOKEN = "patyXlyESkLpAuBsY.ffaf735e412161a668e96fb43bc76ebb18f4457d3b9ff2b62fca59dc42adf4c5";
-const AIRTABLE_BASE  = "appuxirqdTb4YIqur";
-const AIRTABLE_TABLE = "Tasks";
+/* ========= Airtable CONFIG: paste your values ========= */
+const AIRTABLE_TOKEN = "patyXlyESkLpAuBsY.ffaf735e412161a668e96fb43bc76ebb18f4457d3b9ff2b62fca59dc42adf4c5";   // pat******** from Developer Hub
+const AIRTABLE_BASE  = "appuxirqdTb4YIqur";   // app******** from API docs
+const AIRTABLE_TABLE = "Tasks";                      // table name in your base
 
-/* ===== Local state ===== */
+/* ========= Local state ========= */
 const storeKey = "pri_planner_v3";
-let db = load() || { projects: [], weekly: [] };
+let db = load() || { projects: [], weekly: [] };  // keep weekly local for now
 
 function uid(){ return Math.random().toString(36).slice(2, 9); }
-function save(){ localStorage.setItem(storeKey, JSON.stringify(db)); render(); cloudSave(); }
+function save(){ localStorage.setItem(storeKey, JSON.stringify(db)); render(); debounceCloudSave(); }
 function load(){ try{ return JSON.parse(localStorage.getItem(storeKey)); }catch(e){ return null; } }
-function fmtDate(d){ if(!d) return "No date"; try{ return new Date(d).toLocaleDateString(); }catch(e){return d;} }
+function fmtDate(d){ if(!d) return "No date"; try{ return new Date(d).toLocaleDateString(undefined,{day:"2-digit",month:"short",year:"numeric"});}catch(e){return d;} }
 function within7Days(dateStr){ if(!dateStr) return false; const now=new Date(); const d=new Date(dateStr); const diff=(d-now)/(1000*60*60*24); return diff<=7 && diff>=-1; }
 
-/* ===== Render UI ===== */
+/* ========= Render ========= */
 function render(){
   document.getElementById("kpi-total").textContent = db.projects.length;
   document.getElementById("kpi-weekly").textContent = db.weekly.length;
@@ -118,72 +122,242 @@ function render(){
 
   const projEl = document.getElementById("projects");
   projEl.innerHTML = "";
-  db.projects.forEach(p=>{
+  const prioRank = {P0:0, P1:1, P2:2, P3:3};
+  [...db.projects].sort((a,b) => {
+    const pr = (prioRank[a.priority] ?? 9) - (prioRank[b.priority] ?? 9);
+    const dr = new Date(a.deadline||"2100-01-01") - new Date(b.deadline||"2100-01-01");
+    return pr || dr;
+  }).forEach(p => {
     const item = document.createElement("div");
-    item.className="item";
+    item.className = "item";
     item.innerHTML = `
-      <div class="topline"><strong>${p.name}</strong><span class="badge">${p.priority}</span></div>
-      <div class="meta"><span>Stage: <b>${p.stage}</b></span><span>Deadline: <b>${fmtDate(p.deadline)}</b></span></div>
-      ${p.notes? `<div class="muted">${p.notes}</div>`:""}
+      <div class="topline">
+        <div><strong>${escapeHTML(p.title || p.name)}</strong></div>
+        <span class="badge">${escapeHTML(p.priority||"P2")}</span>
+      </div>
+      <div class="meta">
+        <span>Stage: <b>${escapeHTML(p.stage||"—")}</b></span>
+        <span>Deadline: <b>${fmtDate(p.deadline)}</b></span>
+        ${p.link ? `<span>🔗 <a href="${escapeAttr(p.link)}" target="_blank">link</a></span>` : ""}
+      </div>
+      ${p.notes ? `<div class="muted">${escapeHTML(p.notes)}</div>` : ""}
       <div class="actions">
         <button class="btn-accent" onclick='addToWeekly("${p.id}")'>Add to Weekly</button>
-        <button class="btn-ghost" onclick='deleteProject("${p.id}")'>Delete</button>
+        <button class="btn-ghost"  onclick='editProject("${p.id}")'>Edit</button>
+        <button class="btn-warn"   onclick='deleteProject("${p.id}")'>Delete</button>
       </div>`;
     projEl.appendChild(item);
   });
 
   const wEl = document.getElementById("weekly");
-  wEl.innerHTML="";
-  db.weekly.forEach(w=>{
-    const item=document.createElement("div");
-    item.className="item"; item.style.opacity=w.done?.6:1;
-    item.innerHTML=`
-      <div class="topline"><strong>${w.title}</strong>${within7Days(w.due)?'<span class="badge">Due soon</span>':""}</div>
-      <div class="meta"><span>Due: <b>${fmtDate(w.due)}</b></span></div>
+  wEl.innerHTML = "";
+  [...db.weekly].sort((a,b) => {
+    const dd = (a.done===b.done)?0: (a.done?1:-1);
+    const dr = new Date(a.due||"2100-01-01") - new Date(b.due||"2100-01-01");
+    return dd || dr;
+  }).forEach(w => {
+    const item = document.createElement("div");
+    item.className = "item";
+    item.style.opacity = w.done ? 0.6 : 1;
+    item.innerHTML = `
+      <div class="topline">
+        <div><strong>${escapeHTML(w.title)}</strong></div>
+        ${within7Days(w.due) ? `<span class="badge">Due soon</span>` : ``}
+      </div>
+      <div class="meta">
+        <span>Due: <b>${fmtDate(w.due)}</b></span>
+        ${w.link ? `<span>🔗 <a href="${escapeAttr(w.link)}" target="_blank">link</a></span>` : ""}
+        ${w.projectId ? `<span class="pill">linked to project</span>` : ``}
+      </div>
+      ${w.notes ? `<div class="muted">${escapeHTML(w.notes)}</div>` : ""}
       <div class="actions">
-        <button class="btn-ghost" onclick='toggleDone("${w.id}")'>${w.done?"Mark Undone":"Mark Done"}</button>
-        <button class="btn-warn" onclick='deleteWeekly("${w.id}")'>Delete</button>
+        <button class="btn-ghost" onclick='openGoogleCal(${JSON.stringify(w)})'>Google Calendar</button>
+        <button class="btn-accent" onclick='downloadICS(${JSON.stringify(w)})'>.ics</button>
+        <button class="btn-ghost" onclick='toggleDone("${w.id}")'>${w.done ? "Mark Undone" : "Mark Done"}</button>
+        <button class="btn-ghost" onclick='editWeekly("${w.id}")'>Edit</button>
+        <button class="btn-warn"  onclick='deleteWeekly("${w.id}")'>Delete</button>
       </div>`;
     wEl.appendChild(item);
   });
 }
 
-/* ===== CRUD ===== */
+/* ========= CRUD: Projects / Weekly ========= */
 function addProject(){
-  const p={ id:uid(), name:val("p-name"), deadline:val("p-deadline"), stage:val("p-stage"), priority:val("p-priority"), notes:val("p-notes"), link:val("p-link") };
-  if(!p.name) return alert("Project name required");
-  db.projects.push(p); clearInputs("p-name","p-deadline","p-notes","p-link"); save();
-}
-function deleteProject(id){ db.projects=db.projects.filter(p=>p.id!==id); save(); }
-function addToWeekly(id){ const p=db.projects.find(x=>x.id===id); if(!p)return; db.weekly.push({id:uid(), title:p.name, due:p.deadline, done:false}); save(); }
-function quickAddWeekly(){ const title=prompt("Weekly task title"); if(!title)return; db.weekly.push({id:uid(), title, due:new Date().toISOString().slice(0,10), done:false}); save(); }
-function toggleDone(id){ const w=db.weekly.find(x=>x.id===id); if(w){ w.done=!w.done; save(); } }
-function deleteWeekly(id){ db.weekly=db.weekly.filter(w=>w.id!==id); save(); }
-function clearDone(){ db.weekly=db.weekly.filter(w=>!w.done); save(); }
-
-/* ===== Airtable Sync ===== */
-async function cloudSave(){
-  // Clear table (simplest way: re-upload all tasks)
-  for(const proj of db.projects){
-    await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_TABLE}`,{
-      method:"POST",
-      headers:{Authorization:`Bearer ${AIRTABLE_TOKEN}`,"Content-Type":"application/json"},
-      body:JSON.stringify({fields:proj})
-    });
-  }
-}
-async function cloudLoad(){
-  const res=await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${AIRTABLE_TABLE}`,{
-    headers:{Authorization:`Bearer ${AIRTABLE_TOKEN}`}
-  });
-  const data=await res.json();
-  db.projects=data.records.map(r=>r.fields);
+  const project = {
+    id: uid(),
+    title: val("p-name"),
+    deadline: val("p-deadline"),
+    stage: val("p-stage") || "In Progress",
+    priority: val("p-priority") || "P2",
+    notes: val("p-notes"),
+    link: val("p-link"),
+    done: false
+  };
+  if(!project.title) return alert("Project name is required");
+  db.projects.push(project);
+  clearInputs("p-name","p-deadline","p-notes","p-link");
   save();
 }
+function editProject(id){
+  const p = db.projects.find(x => x.id===id);
+  if(!p) return;
+  const title = prompt("Project name", p.title) ?? p.title;
+  const deadline = prompt("Deadline (YYYY-MM-DD)", p.deadline||"") ?? p.deadline;
+  const stage = prompt("Stage (Ideation/In Progress/Review/Final)", p.stage||"") ?? p.stage;
+  const priority = prompt("Priority (P0/P1/P2)", p.priority||"P2") ?? p.priority;
+  const link = prompt("Link", p.link||"") ?? p.link;
+  const notes = prompt("Notes", p.notes||"") ?? p.notes;
+  Object.assign(p, {title, deadline, stage, priority, link, notes});
+  save();
+}
+function deleteProject(id){ db.projects = db.projects.filter(x => x.id!==id); save(); }
 
-/* ===== Helpers ===== */
-function val(id){return document.getElementById(id).value.trim();}
-function clearInputs(...ids){ids.forEach(i=>document.getElementById(i).value="");}
+function addToWeekly(projectId){
+  const p = db.projects.find(x => x.id===projectId);
+  if(!p) return;
+  db.weekly.push({ id:uid(), title:p.title, due:p.deadline, projectId:p.id, notes:p.notes, link:p.link, done:false });
+  save();
+}
+function quickAddWeekly(){
+  const title = prompt("Weekly task title");
+  if(!title) return;
+  const today = new Date().toISOString().slice(0,10);
+  db.weekly.push({ id:uid(), title, due: today, notes:"", link:"", done:false });
+  save();
+}
+function clearDone(){ db.weekly = db.weekly.filter(w => !w.done); save(); }
+function editWeekly(id){
+  const w = db.weekly.find(x => x.id===id);
+  if(!w) return;
+  const title = prompt("Title", w.title) ?? w.title;
+  const due = prompt("Due (YYYY-MM-DD)", w.due||"") ?? w.due;
+  const link = prompt("Link", w.link||"") ?? w.link;
+  const notes = prompt("Notes", w.notes||"") ?? w.notes;
+  Object.assign(w, {title, due, link, notes});
+  save();
+}
+function deleteWeekly(id){ db.weekly = db.weekly.filter(x => x.id!==id); save(); }
+function toggleDone(id){ const w = db.weekly.find(x => x.id===id); if(!w) return; w.done = !w.done; save(); }
+
+/* ========= Airtable SYNC =========
+   Strategy: Replace the Airtable table with current projects (no duplicates).
+   - cloudLoad(): pulls all rows → db.projects
+   - cloudSave(): deletes all records, then re-creates from db.projects
+   This is simple & reliable for small personal lists.
+=================================== */
+let cloudTimer=null;
+function debounceCloudSave(){ clearTimeout(cloudTimer); cloudTimer=setTimeout(cloudSave, 400); }
+
+async function cloudLoad(){
+  if(!AIRTABLE_TOKEN || !AIRTABLE_BASE) { console.warn("Airtable keys missing"); return; }
+  const out=[];
+  let offset=null;
+  try {
+    do{
+      const url = new URL(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(AIRTABLE_TABLE)}`);
+      if(offset) url.searchParams.set("offset", offset);
+      const res = await fetch(url, { headers:{Authorization:`Bearer ${AIRTABLE_TOKEN}`}});
+      const data = await res.json();
+      if(data?.records){
+        for(const r of data.records){
+          const f = r.fields || {};
+          out.push({
+            id: f.id || uid(),
+            title: f.title || "",
+            deadline: f.deadline || "",
+            stage: f.stage || "In Progress",
+            priority: f.priority || "P2",
+            notes: f.notes || "",
+            link: f.link || "",
+            done: !!f.done
+          });
+        }
+      }
+      offset = data.offset;
+    } while(offset);
+    db.projects = out;
+    save(); // re-render + localStorage (will also schedule a save, harmless)
+  } catch(e){
+    console.error("Airtable load failed:", e);
+    alert("Could not load from Airtable. Check your token/base ID.");
+  }
+}
+
+async function cloudSave(){
+  if(!AIRTABLE_TOKEN || !AIRTABLE_BASE) { return; }
+  try {
+    // 1) Fetch existing records to delete
+    let toDelete=[];
+    let offset=null;
+    do{
+      const url = new URL(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(AIRTABLE_TABLE)}`);
+      if(offset) url.searchParams.set("offset", offset);
+      const res = await fetch(url, { headers:{Authorization:`Bearer ${AIRTABLE_TOKEN}`}});
+      const data = await res.json();
+      if(data?.records){ toDelete = toDelete.concat(data.records.map(r=>r.id)); }
+      offset = data.offset;
+    } while(offset);
+
+    // Delete in batches of 10
+    while(toDelete.length){
+      const batch = toDelete.splice(0,10);
+      await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(AIRTABLE_TABLE)}`,{
+        method:"DELETE",
+        headers:{Authorization:`Bearer ${AIRTABLE_TOKEN}`},
+        body: new URLSearchParams(batch.map(id=>["records[]", id]))
+      });
+    }
+
+    // 2) Create from local projects in batches of 10
+    const records = db.projects.map(p=>({ fields:{
+      id: p.id, title: p.title, deadline: p.deadline, stage: p.stage, priority: p.priority, notes: p.notes, link: p.link, done: !!p.done
+    }}));
+    let i=0;
+    while(i < records.length){
+      const batch = records.slice(i, i+10);
+      await fetch(`https://api.airtable.com/v0/${AIRTABLE_BASE}/${encodeURIComponent(AIRTABLE_TABLE)}`,{
+        method:"POST",
+        headers:{Authorization:`Bearer ${AIRTABLE_TOKEN}`,"Content-Type":"application/json"},
+        body: JSON.stringify({ records: batch })
+      });
+      i+=10;
+    }
+  } catch(e){
+    console.error("Airtable save failed:", e);
+  }
+}
+
+/* ========= Calendar helpers ========= */
+function downloadICS(w){
+  const start = new Date(w.due || new Date()); start.setHours(10,0,0,0);
+  const end = new Date(start); end.setHours(11);
+  const toICS = dt => dt.toISOString().replace(/[-:]/g,"").split(".")[0] + "Z";
+  const ics = [
+    "BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//Pri Planner//EN","CALSCALE:GREGORIAN","BEGIN:VEVENT",
+    `UID:${w.id}@pri-planner`,`DTSTAMP:${toICS(new Date())}`,`DTSTART:${toICS(start)}`,`DTEND:${toICS(end)}`,
+    `SUMMARY:${escapeICS(w.title)}`,`DESCRIPTION:${escapeICS((w.notes||"") + (w.link? `\n${w.link}`:""))}`,
+    "END:VEVENT","END:VCALENDAR"].join("\r\n");
+  const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob([ics],{type:"text/calendar"}));
+  a.download=(w.title||"task").replace(/\s+/g,"-").toLowerCase()+".ics"; a.click();
+}
+function openGoogleCal(w){
+  const start=new Date(w.due||new Date()); start.setHours(10,0,0,0);
+  const end=new Date(start); end.setHours(11);
+  const fmt = d => d.toISOString().replace(/[-:]/g,"").split(".")[0]+"Z";
+  const url = new URL("https://calendar.google.com/calendar/render");
+  url.searchParams.set("action","TEMPLATE");
+  url.searchParams.set("text", w.title||"Task");
+  url.searchParams.set("dates", `${fmt(start)}/${fmt(end)}`);
+  url.searchParams.set("details", `${w.notes||""}${w.link? "\n"+w.link:""}`);
+  window.open(url.toString(), "_blank");
+}
+
+/* ========= Small utils ========= */
+function val(id){ return document.getElementById(id).value.trim(); }
+function clearInputs(...ids){ ids.forEach(i => document.getElementById(i).value=""); }
+function escapeHTML(s){ return String(s??"").replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function escapeAttr(s){ return escapeHTML(s).replace(/"/g,'&quot;'); }
+function escapeICS(s){ return String(s||"").replace(/[\n\r]/g,"\\n").replace(/,/g,"\\,").replace(/;/g,"\\;"); }
 
 render();
 </script>
